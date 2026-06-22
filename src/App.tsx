@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from './supabaseClient';
 import Auth from './Auth'; // ログイン画面
 import type { Session } from '@supabase/supabase-js'; // セッションの型定義
@@ -32,6 +32,8 @@ interface Log {
 }
 
 export default function App() {
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
 	// ログイン状態(セッション)を管理するState(型安全)
 	const [session, setSession] = useState<Session | null>(null);
 	const [authLoading, setAuthLoading] = useState(true);
@@ -133,15 +135,21 @@ export default function App() {
 	};
 
 	// ログインセッションが確定したら、ペットとログを両方取得
+	// fetchPets と fetchLogs から setLoading(false) を外し、呼び出し側で一括管理する
 	useEffect(() => {
 		if (!session?.user) return; // ログインしていなければスキップ
 
-		// 実行タイミングを「次のイベントループ」に回すことでEffect内での同期的なState更新の警告(エラー)を完全に回避
-		const timer = setTimeout(() => {
-			fetchPets(session.user.id);
-			fetchLogs(session.user.id);
-		}, 0);
-		return () => clearTimeout(timer);
+		const loadData = async () => {
+			setLoading(true);
+			// 2つの非同期処理を同時に走らせ、両方終わるのを待つ
+			await Promise.all([
+				fetchPets(session.user.id),
+				fetchLogs(session.user.id)
+			]);
+			setLoading(false);
+		};
+
+		loadData();
 	}, [session]);
 
 	// 新しいペットを登録する処理
@@ -277,8 +285,9 @@ export default function App() {
 			setDosageNote('');
 			setNote('');
 			setImageFile(null);
-			const fileInput = document.getElementById('photo-input') as HTMLInputElement;
-			if (fileInput) fileInput.value = '';
+			if (fileInputRef.current) {
+				fileInputRef.current.value = '';
+			}
 		}
 		setUploading(false);
 	};
@@ -387,20 +396,22 @@ export default function App() {
 
 					{/* ペット追加フォーム(トグル表示) */}
 					{showPetForm && (
-						<form action={handleAddPet} className="bg-olive-100 rounded-xl p-4 mb-6 border border-olive-200 space-y-3">
+						<form
+							onSubmit={async (e) => {
+								e.preventDefault(); // ページリロードを防止
+								await handleAddPet();
+							}}
+							className="bg-olive-100 rounded-xl p-4 mb-6 border border-olive-200 space-y-3">
 							<h4 className="font-bold text-olive-700 text-xs">🐾 新しいペットを登録</h4>
 							<div className="grid grid-cols-3 gap-2">
 								<input
 									type="text" placeholder="名前 (必須)" value={newPetName} onChange={(e) => setNewPetName(e.target.value)}
 									className="bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none"
 								/>
-
 								<input
 									type="text" placeholder="懸念・アレルギー" value={newPetAllergy} onChange={(e) => setNewPetAllergy(e.target.value)}
 									className="bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none col-span-2"
 								/>
-
-
 								<input
 									type="text" placeholder="年齢 (例: 5歳)" value={newPetAge} onChange={(e) => setNewPetAge(e.target.value)}
 									className="bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none "
@@ -413,10 +424,9 @@ export default function App() {
 									type="number" step="0.1" placeholder="基準体重 (kg)" value={newPetWeight} onChange={(e) => setNewPetWeight(e.target.value)}
 									className="bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none "
 								/>
-
 							</div>
 							<button
-								onClick={handleAddPet}
+								type="submit"
 								className="w-full bg-olive-800 text-white font-bold py-1.5 rounded-lg text-xs hover:bg-olive-700 transition-colors"
 							>
 								ペットを登録する
@@ -426,7 +436,12 @@ export default function App() {
 
 					{/* ペット情報編集フォーム（トグル表示） */}
 					{showEditPetForm && currentPet && (
-						<form action={handleUpdatePet} className="bg-lime-50 rounded-xl p-4 mb-6 border border-lime-100 space-y-3">
+						<form
+							onSubmit={async (e) => {
+								e.preventDefault();
+								await handleUpdatePet();
+							}}
+							className="bg-lime-50 rounded-xl p-4 mb-6 border border-lime-100 space-y-3">
 							<h4 className="font-bold text-lime-800 text-xs flex items-center gap-1">
 								<span>✏️</span> {currentPet.name} の情報を編集
 							</h4>
@@ -439,7 +454,6 @@ export default function App() {
 										required
 									/>
 								</div>
-
 								<div className="col-span-2">
 									<label className="block text-[10px] font-bold text-olive-500 mb-0.5">懸念・アレルギー</label>
 									<input
@@ -447,8 +461,6 @@ export default function App() {
 										className="w-full bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none"
 									/>
 								</div>
-
-
 								<div >
 									<label className="block text-[10px] font-bold text-olive-500 mb-0.5">年齢</label>
 									<input
@@ -470,8 +482,6 @@ export default function App() {
 										className="w-full bg-white border border-olive-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none"
 									/>
 								</div>
-
-
 							</div>
 							<div className="flex gap-2">
 								<button
@@ -522,16 +532,21 @@ export default function App() {
 						<div className='md:flex-1 md:w-1/2'>
 							{/*  入力フォーム */}
 							{currentPet && (
-								<form action={handleSubmit} className="bg-olive-50 rounded-xl p-4 border border-olive-100 mb-8 space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4">
+								<form
+									onSubmit={async (e) => {
+										e.preventDefault();
+										await handleSubmit();
+									}}
+									className="bg-olive-50 rounded-xl p-4 border border-olive-100 mb-8 space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4">
 									<h3 className="font-bold text-olive-700 text-sm border-b border-olive-200 pb-2">✏️ 本日の記録を入力</h3>
 
 									{/*  写真アップロード入力欄 */}
 									<div className="col-span-2">
 										<label className="block text-xs font-bold text-olive-500 mb-1">📸 患部の写真を追加</label>
 										<input
-											id="photo-input"
+											ref={fileInputRef} // id の代わりに ref を紐付ける
 											type="file"
-											accept="image/*" // 画像ファイルのみ
+											accept="image/*"
 											onChange={(e) => {
 												if (e.target.files && e.target.files[0]) {
 													setImageFile(e.target.files[0]);
